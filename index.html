@@ -888,6 +888,14 @@
             <div class="modal-body flex flex-col gap-4 text-center">
                 <h2 class="text-2xl font-bold" id="pay-total-display">0.00</h2>
 
+                <!-- Order Type Selection -->
+                <div class="flex justify-center gap-2 mb-2">
+                    <button id="btn-order-takein" class="btn btn-primary" onclick="App.pos.setOrderType('Take In')">🍽️
+                        Take In</button>
+                    <button id="btn-order-delivery" class="btn" onclick="App.pos.setOrderType('Delivery')">🛵
+                        Delivery</button>
+                </div>
+
                 <!-- QR Display -->
                 <div id="pay-upi-qr-container" class="hidden flex justify-center p-2 mb-2"
                     style="background:#f0f0f0; border-radius:8px;">
@@ -908,10 +916,15 @@
                     <option>Cash</option>
                     <option>UPI</option>
                     <option>Card</option>
+                    <option>Split</option>
                 </select>
                 <div class="flex gap-2">
-                    <input id="pay-discount-val" type="number" class="input" placeholder="Discount Amount">
-                    <button class="btn" onclick="App.pos.applyBillDiscount()">Apply Disc</button>
+                    <select id="pay-discount-type" class="input" style="width: 70px;">
+                        <option value="amount">₹</option>
+                        <option value="percent">%</option>
+                    </select>
+                    <input id="pay-discount-val" type="number" class="input" placeholder="Discount">
+                    <button class="btn" onclick="App.pos.applyBillDiscount()">Apply</button>
                 </div>
             </div>
             <div class="modal-footer justify-center">
@@ -1421,6 +1434,7 @@
             pos: {
                 cart: [],
                 filterCategory: '',
+                orderType: 'Take In',
 
                 renderProducts: () => {
                     App.pos.filterAndRender();
@@ -1522,6 +1536,9 @@
                         }
                     }
 
+                    // Reset discount on cart change
+                    App.pos.calculatedDiscount = 0;
+
                     item.qty = newQty;
                     if (item.qty <= 0) App.pos.cart.splice(idx, 1);
                     App.pos.renderCart();
@@ -1547,8 +1564,26 @@
                     // Reset UI
                     document.getElementById('pay-mode').value = 'Cash';
                     App.pos.setPayMode('Cash');
+                    document.getElementById('pay-discount-val').value = '';
+                    document.getElementById('pay-discount-type').value = 'amount';
+
+                    // Reset Order Type
+                    App.pos.setOrderType('Take In');
 
                     App.router.showModal('modal-checkout');
+                },
+                setOrderType: (type) => {
+                    App.pos.orderType = type;
+                    const btnIn = document.getElementById('btn-order-takein');
+                    const btnDel = document.getElementById('btn-order-delivery');
+
+                    if (type === 'Take In') {
+                        btnIn.classList.add('btn-primary');
+                        btnDel.classList.remove('btn-primary');
+                    } else {
+                        btnIn.classList.remove('btn-primary');
+                        btnDel.classList.add('btn-primary');
+                    }
                 },
                 setPayMode: (mode) => {
                     document.getElementById('pay-mode').value = mode;
@@ -1568,12 +1603,29 @@
                     }
                 },
                 applyBillDiscount: () => {
-                    const disc = parseFloat(document.getElementById('pay-discount-val').value) || 0;
-                    document.getElementById('pay-total-display').textContent = Utils.formatCurrency(App.pos.checkoutTotal - disc);
+                    const val = parseFloat(document.getElementById('pay-discount-val').value) || 0;
+                    const type = document.getElementById('pay-discount-type').value;
+                    let discAmt = 0;
+
+                    if (type === 'percent') {
+                        discAmt = App.pos.checkoutTotal * (val / 100);
+                    } else {
+                        discAmt = val;
+                    }
+
+                    // Cap discount at total
+                    if (discAmt > App.pos.checkoutTotal) {
+                        alert("Discount cannot exceed total amount");
+                        discAmt = 0;
+                        document.getElementById('pay-discount-val').value = '';
+                    }
+
+                    document.getElementById('pay-total-display').textContent = Utils.formatCurrency(App.pos.checkoutTotal - discAmt);
+                    App.pos.calculatedDiscount = discAmt; // Store for valid checkout
                 },
                 confirmCheckout: () => {
                     const custId = document.getElementById('cart-customer').value;
-                    const discount = parseFloat(document.getElementById('pay-discount-val').value) || 0;
+                    const discount = App.pos.calculatedDiscount || 0;
                     const finalTotal = App.pos.checkoutTotal - discount;
                     const mode = document.getElementById('pay-mode').value;
 
@@ -1588,7 +1640,8 @@
                         tax: App.pos.checkoutTax,
                         discount: discount,
                         total: finalTotal,
-                        payment_mode: mode
+                        payment_mode: mode,
+                        order_type: App.pos.orderType
                     };
 
                     // Save
@@ -1639,14 +1692,25 @@
                             <p style="margin:0">${inv.date.replace('T', ' ').substring(0, 16)}</p>
                         </div>
                         <div class="receipt-divider"></div>
-                        ${inv.items.map(i => `
+                        <div style="border-bottom:1px solid #000; margin-bottom:5px; padding-bottom:2px; font-weight:bold; display:flex;">
+                            <span style="width:10%;">#</span>
+                            <span style="width:55%;">Item</span>
+                            <span style="width:35%; text-align:right;">Qty x Price</span>
+                        </div>
+                        ${inv.items.map((i, idx) => `
                             <div class="receipt-line">
-                                <span>${i.name}</span>
-                                <span>${i.qty} x ${i.price}</span>
+                                <span style="width:10%;">${idx + 1}</span>
+                                <span style="width:55%; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">${i.name}</span>
+                                <span style="width:35%; text-align:right;">${i.qty} x ${i.price}</span>
                             </div>
                         `).join('')}
                         <div class="receipt-divider"></div>
-                        <div class="receipt-line"><span>Total</span> <span>${Utils.formatCurrency(inv.total)}</span></div>
+                        <div class="receipt-line"><span>Subtotal</span> <span>${Utils.formatCurrency(inv.subtotal || inv.total)}</span></div>
+                        ${inv.discount > 0 ? `<div class="receipt-line"><span>Discount</span> <span>- ${Utils.formatCurrency(inv.discount)}</span></div>` : ''}
+                        ${inv.tax > 0 ? `<div class="receipt-line"><span>Tax</span> <span>${Utils.formatCurrency(inv.tax)}</span></div>` : ''}
+                        <div class="receipt-line" style="font-weight:bold; border-top:1px dashed #000; padding-top:5px; margin-top:5px;">
+                            <span>Total</span> <span>${Utils.formatCurrency(inv.total)}</span>
+                        </div>
                         <div class="receipt-line"><span>Mode</span> <span>${inv.payment_mode}</span></div>
                         <div class="receipt-divider"></div>
                         <div style="text-align:center">${config.footer || 'Thanks!'}</div>
