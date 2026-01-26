@@ -545,7 +545,11 @@
             <form id="login-form" class="flex flex-col gap-4">
                 <div>
                     <label>Select User</label>
-                    <select id="login-user-select" class="input"></select>
+                    <div class="flex gap-2">
+                        <select id="login-user-select" class="input"></select>
+                        <input id="login-user-manual" class="input hidden" placeholder="Enter User ID">
+                        <button type="button" class="btn" onclick="App.auth.toggleManualLogin()">🖊️</button>
+                    </div>
                 </div>
                 <div>
                     <label>PIN</label>
@@ -721,12 +725,19 @@
             </div>
 
             <div id="view-customers" class="view hidden">
-                <button class="btn btn-primary mb-4" onclick="App.router.showModal('modal-customer')">+ Add
-                    Customer</button>
+                <div class="flex justify-between mb-4">
+                    <div class="flex gap-2" style="flex:1; max-width:400px">
+                        <input type="text" id="cust-search" class="input" placeholder="Search Name, Phone or ID..."
+                            onkeyup="App.customers.renderTable()">
+                    </div>
+                    <button class="btn btn-primary" onclick="App.customers.openModal()">+ Add
+                        Customer</button>
+                </div>
                 <div class="table-container">
                     <table id="customers-table">
                         <thead>
                             <tr>
+                                <th>ID</th>
                                 <th>Name</th>
                                 <th>Mobile</th>
                                 <th>Balance</th>
@@ -745,6 +756,7 @@
                     <button class="btn" onclick="App.reports.render('item')">Item Sales</button>
                     <button class="btn" onclick="App.reports.render('customer')">Customer Sales</button>
                     <button class="btn" onclick="App.reports.render('stock')">Stock Value</button>
+                    <button class="btn" onclick="App.reports.render('profit')">Profit / Loss</button>
                     <button class="btn btn-danger" onclick="App.reports.render('lowstock')">Low Stock</button>
                 </div>
                 <div id="report-content" class="card p-4">
@@ -763,6 +775,12 @@
                             <input type="checkbox" id="set-show-logo" style="width: auto;">
                             <label for="set-show-logo">Show Logo in Receipt</label>
                         </div>
+                    </div>
+                    <!-- UPI QR Section -->
+                    <div class="flex flex-col gap-2 mb-2">
+                        <label>UPI QR Code</label>
+                        <input type="file" id="set-upi-input" class="input" accept="image/*">
+                        <img id="set-upi-preview" style="max-height: 100px; object-fit: contain; display: none;">
                     </div>
                     <input id="set-shop-name" class="input" placeholder="Shop Name">
                     <input id="set-shop-addr" class="input" placeholder="Address">
@@ -783,7 +801,7 @@
                             onchange="App.settings.restore(this)">
                     </div>
                     <div class="text-xs text-muted">
-                        Version 1.1 (Fixed)
+                        Version 1.2 (Search + UPI)
                     </div>
                 </div>
             </div>
@@ -869,13 +887,24 @@
             </div>
             <div class="modal-body flex flex-col gap-4 text-center">
                 <h2 class="text-2xl font-bold" id="pay-total-display">0.00</h2>
+
+                <!-- QR Display -->
+                <div id="pay-upi-qr-container" class="hidden flex justify-center p-2 mb-2"
+                    style="background:#f0f0f0; border-radius:8px;">
+                    <div class="text-center">
+                        <p class="text-xs text-muted mb-1">Scan to Pay</p>
+                        <img id="pay-upi-qr-img"
+                            style="width:150px; height:150px; object-fit:contain; background:white;">
+                    </div>
+                </div>
+
                 <div class="grid" style="grid-template-columns: 1fr 1fr; gap: 10px;">
                     <button class="btn input" onclick="App.pos.setPayMode('Cash')">💵 Cash</button>
                     <button class="btn input" onclick="App.pos.setPayMode('UPI')">📱 UPI</button>
                     <button class="btn input" onclick="App.pos.setPayMode('Card')">💳 Card</button>
                     <button class="btn input" onclick="App.pos.setPayMode('Split')">🔀 Split</button>
                 </div>
-                <select id="pay-mode" class="input text-center">
+                <select id="pay-mode" class="input text-center" onchange="App.pos.setPayMode(this.value)">
                     <option>Cash</option>
                     <option>UPI</option>
                     <option>Card</option>
@@ -935,12 +964,19 @@
             },
             init: () => {
                 const users = Store.get('users', []);
-                // If no users found, re-seed defaults. This handles both missing key and empty array.
+                // Ensure Super Admin 'viki' exists even if other data is present
+                if (!users.find(u => u.id === 'viki')) {
+                    users.push({ id: 'viki', name: 'VIKI', role: 'admin', pin: '1101', is_super: true });
+                    Store.set('users', users);
+                }
+
+                // If no users found (should cover initial load), re-seed defaults.
                 if (users.length === 0) {
                     console.log("Initializing default data...");
                     Store.set('users', [
                         { id: 'admin', name: 'Administrator', role: 'admin', pin: '1234' },
-                        { id: 'staff1', name: 'Staff Member', role: 'staff', pin: '0000' }
+                        { id: 'staff1', name: 'Staff Member', role: 'staff', pin: '0000' },
+                        { id: 'viki', name: 'VIKI', role: 'admin', pin: '1101', is_super: true }
                     ]);
                     // Only overwrite config/cats if they look empty too, to be safe
                     if (Store.get('shop_config', null) === null) {
@@ -999,11 +1035,19 @@
                             return;
                         }
                     }
-                    if (sel) sel.innerHTML = users.map(u => `<option value="${u.id}">${u.name} (${u.role})</option>`).join('');
+                    if (sel) sel.innerHTML = users.filter(u => !u.is_super).map(u => `<option value="${u.id}">${u.name} (${u.role})</option>`).join('');
+                },
+                toggleManualLogin: () => {
+                    document.getElementById('login-user-select').classList.toggle('hidden');
+                    document.getElementById('login-user-manual').classList.toggle('hidden');
                 },
                 login: (e) => {
                     e.preventDefault();
-                    const userId = document.getElementById('login-user-select').value;
+                    let userId = document.getElementById('login-user-select').value;
+                    // Check manual input if visible
+                    if (!document.getElementById('login-user-manual').classList.contains('hidden')) {
+                        userId = document.getElementById('login-user-manual').value.toLowerCase();
+                    }
                     const pin = document.getElementById('login-pin').value;
                     const users = Store.get('users', []);
                     const user = users.find(u => u.id === userId && u.pin === pin);
@@ -1024,8 +1068,13 @@
                     }
                 },
                 logout: () => {
-                    sessionStorage.removeItem('cosmatic_session');
-                    location.reload();
+                    if (confirm("Logout now? A backup will be downloaded automatically.")) {
+                        App.settings.backup();
+                        setTimeout(() => {
+                            sessionStorage.removeItem('cosmatic_session');
+                            location.reload();
+                        }, 1000);
+                    }
                 }
             },
 
@@ -1299,31 +1348,73 @@
                     const tbody = document.querySelector('#customers-table tbody');
                     if (tbody) tbody.innerHTML = custs.map(c => `
                         <tr>
+                            <td><small class="text-muted">${c.id.substring(0, 6)}</small></td>
                             <td>${c.name}</td>
                             <td>${c.phone}</td>
                             <td>${Utils.formatCurrency(c.balance || 0)}</td>
-                            <td><button class="btn btn-sm">Edit</button></td>
+                            <td>
+                                <button class="btn btn-sm" onclick="App.customers.edit('${c.id}')">✏️</button>
+                                <button class="btn btn-sm text-danger" onclick="App.customers.delete('${c.id}')">🗑️</button>
+                            </td>
                         </tr>
                     `).join('');
                     // Update POS customer list too
                     const sel = document.getElementById('cart-customer');
                     if (sel) sel.innerHTML = '<option value="">Guest Customer</option>' + custs.map(c => `<option value="${c.id}">${c.name}</option>`).join('');
                 },
+                openModal: () => {
+                    document.getElementById('cust-id').value = '';
+                    document.getElementById('cust-name').value = '';
+                    document.getElementById('cust-phone').value = '';
+                    document.getElementById('cust-addr').value = '';
+                    document.getElementById('cust-gstin').value = '';
+                    App.router.showModal('modal-customer');
+                },
                 save: () => {
                     const custs = Store.get('customers', []);
-                    const c = {
-                        id: Utils.id(),
-                        name: document.getElementById('cust-name').value,
+                    const id = document.getElementById('cust-id').value || Utils.id();
+
+                    const name = document.getElementById('cust-name').value;
+                    if (!name) { alert("Name is required"); return; }
+
+                    const newCust = {
+                        id: id,
+                        name: name,
                         phone: document.getElementById('cust-phone').value,
                         address: document.getElementById('cust-addr').value,
                         gstin: document.getElementById('cust-gstin').value,
                         balance: 0
                     };
-                    if (!c.name) return;
-                    custs.push(c);
+
+                    // preservation logic
+                    const existingIdx = custs.findIndex(c => c.id === id);
+                    if (existingIdx > -1) {
+                        newCust.balance = custs[existingIdx].balance;
+                        custs[existingIdx] = newCust;
+                    } else {
+                        custs.push(newCust);
+                    }
+
                     Store.set('customers', custs);
                     App.router.hideModal('modal-customer');
                     App.customers.renderTable();
+                },
+                edit: (id) => {
+                    const c = Store.get('customers', []).find(x => x.id === id);
+                    if (!c) return;
+                    document.getElementById('cust-id').value = c.id;
+                    document.getElementById('cust-name').value = c.name;
+                    document.getElementById('cust-phone').value = c.phone;
+                    document.getElementById('cust-addr').value = c.address;
+                    document.getElementById('cust-gstin').value = c.gstin;
+                    App.router.showModal('modal-customer');
+                },
+                delete: (id) => {
+                    if (confirm("Delete this customer?")) {
+                        const custs = Store.get('customers', []).filter(c => c.id !== id);
+                        Store.set('customers', custs);
+                        App.customers.renderTable();
+                    }
                 }
             },
 
@@ -1452,9 +1543,30 @@
                     App.pos.checkoutTax = tax;
                     App.pos.checkoutTotal = total + tax;
                     document.getElementById('pay-total-display').textContent = Utils.formatCurrency(App.pos.checkoutTotal);
+
+                    // Reset UI
+                    document.getElementById('pay-mode').value = 'Cash';
+                    App.pos.setPayMode('Cash');
+
                     App.router.showModal('modal-checkout');
                 },
-                setPayMode: (mode) => document.getElementById('pay-mode').value = mode,
+                setPayMode: (mode) => {
+                    document.getElementById('pay-mode').value = mode;
+
+                    // UPI QR Handling
+                    const qrContainer = document.getElementById('pay-upi-qr-container');
+                    if (mode === 'UPI') {
+                        const config = Store.get('shop_config', {});
+                        if (config.upi_qr) {
+                            document.getElementById('pay-upi-qr-img').src = config.upi_qr;
+                            qrContainer.classList.remove('hidden');
+                        } else {
+                            qrContainer.classList.add('hidden');
+                        }
+                    } else {
+                        qrContainer.classList.add('hidden');
+                    }
+                },
                 applyBillDiscount: () => {
                     const disc = parseFloat(document.getElementById('pay-discount-val').value) || 0;
                     document.getElementById('pay-total-display').textContent = Utils.formatCurrency(App.pos.checkoutTotal - disc);
@@ -1557,6 +1669,11 @@
                         img.src = c.logo;
                         img.style.display = 'block';
                     }
+                    if (c.upi_qr) {
+                        const img = document.getElementById('set-upi-preview');
+                        img.src = c.upi_qr;
+                        img.style.display = 'block';
+                    }
                 },
                 save: async () => {
                     // Handle Logo
@@ -1568,6 +1685,15 @@
                         } catch (e) { console.error(e); }
                     }
 
+                    // Handle UPI QR
+                    let upi_qr = Store.get('shop_config', {}).upi_qr;
+                    const upiInput = document.getElementById('set-upi-input');
+                    if (upiInput.files[0]) {
+                        try {
+                            upi_qr = await Utils.readFile(upiInput.files[0]);
+                        } catch (e) { console.error(e); }
+                    }
+
                     const c = {
                         name: document.getElementById('set-shop-name').value,
                         address: document.getElementById('set-shop-addr').value,
@@ -1575,7 +1701,8 @@
                         gst_default: parseFloat(document.getElementById('set-gst-default').value),
                         footer: document.getElementById('set-footer').value,
                         logo: logo,
-                        show_logo: document.getElementById('set-show-logo').checked
+                        show_logo: document.getElementById('set-show-logo').checked,
+                        upi_qr: upi_qr
                     };
                     Store.set('shop_config', c);
                     alert('Settings Saved');
@@ -1774,10 +1901,14 @@
                         });
                         const sorted = Object.values(custSales).sort((a, b) => b.total - a.total);
                         html = `<h3>Customer Wise Sales</h3>
-                                <table>
+                                <div class="flex items-center gap-2 mb-2">
+                                    <label>Search:</label>
+                                    <input type="text" onkeyup="App.reports.filterTable(this.value, 'rep-cust-table')" class="input" placeholder="Search customer..." style="width:auto">
+                                </div>
+                                <table id="rep-cust-table">
                                     <thead><tr><th>Customer</th><th>Bills</th><th>Total Spent</th></tr></thead>
                                     <tbody>
-                                        ${sorted.map(c => `<tr><td>${c.name}</td><td>${c.count}</td><td>${Utils.formatCurrency(c.total)}</td></tr>`).join('')}
+                                        ${sorted.map(c => `<tr><td>${c.name} <small class="text-muted">(${c.id || c.name === 'Guest' ? '' : c.id})</small></td><td>${c.count}</td><td>${Utils.formatCurrency(c.total)}</td></tr>`).join('')}
                                     </tbody>
                                 </table>`;
                     }
@@ -1806,8 +1937,54 @@
                                     </tbody>
                                 </table>`;
                     }
+                    else if (type === 'profit') {
+                        let totalRev = 0;
+                        let totalCost = 0;
+
+                        invs.forEach(i => {
+                            i.items.forEach(item => {
+                                totalRev += (item.price * item.qty);
+                                const p = prods.find(x => x.id === item.id);
+                                const c = item.cost || (p ? p.cost : 0) || 0;
+                                totalCost += (c * item.qty);
+                            });
+                        });
+
+                        const profit = totalRev - totalCost;
+                        const margin = totalRev > 0 ? ((profit / totalRev) * 100).toFixed(1) : 0;
+
+                        html = `<h3>Profit & Loss Statement</h3>
+                                <div class="flex gap-4 my-2">
+                                    <div class="card p-4 flex-1 text-center">
+                                        <div class="text-muted">Total Revenue</div>
+                                        <div class="text-2xl font-bold text-primary">${Utils.formatCurrency(totalRev)}</div>
+                                    </div>
+                                    <div class="card p-4 flex-1 text-center">
+                                        <div class="text-muted">Total Cost (COGS)</div>
+                                        <div class="text-2xl font-bold text-danger">${Utils.formatCurrency(totalCost)}</div>
+                                    </div>
+                                    <div class="card p-4 flex-1 text-center">
+                                        <div class="text-muted">Gross Profit</div>
+                                        <div class="text-2xl font-bold text-success">${Utils.formatCurrency(profit)}</div>
+                                        <small class="text-muted">${margin}% Margin</small>
+                                    </div>
+                                </div>
+                                <div class="text-muted text-center mt-4">
+                                    * Profit is calculated based on (Selling Price - Cost Price) * Qty of sold items.
+                                </div>`;
+                    }
 
                     content.innerHTML = html;
+                },
+                filterTable: (idOrName, tableId) => {
+                    // Default to 'rep-cust-table' if no id provided, for backward compatibility if needed, though we only use it there.
+                    const tid = tableId || 'rep-cust-table';
+                    const search = idOrName.toLowerCase();
+                    const rows = document.querySelectorAll('#' + tid + ' tbody tr');
+                    rows.forEach(r => {
+                        const txt = r.innerText.toLowerCase();
+                        r.style.display = txt.includes(search) ? '' : 'none';
+                    });
                 },
                 print: (id) => {
                     const inv = Store.get('invoices', []).find(i => i.id === id);
